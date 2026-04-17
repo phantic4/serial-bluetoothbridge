@@ -1,4 +1,4 @@
-# BLE Robot Controller
+# bluetooth bridge
 
 A serial Bluetooth Bridge python script
 
