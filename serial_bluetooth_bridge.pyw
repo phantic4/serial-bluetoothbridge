@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from ble_robot_controller import build_parser, run_gui
+from serial_bluetooth_bridge import build_parser, run_gui
 
 
 def main() -> int:
