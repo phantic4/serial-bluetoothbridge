@@ -19,7 +19,7 @@ py -3 -m venv .venv
 
 
 ```text
-dist\BLERobotController.exe
+dist\SerialBluetoothBridge.exe
 ```
 
 ## Linux Build
@@ -38,7 +38,7 @@ python3 -m venv .venv
 
 
 ```text
-dist/BLERobotController
+dist/SerialBluetoothBridge
 ```
 
 ## Running From Source
@@ -46,17 +46,17 @@ dist/BLERobotController
 Terminal mode:
 
 ```bash
-python ble_robot_controller.py --name DEVICE_NAME
+python serial_bluetooth_bridge.py --name DEVICE_NAME
 ```
 
 GUI mode:
 
 ```bash
-python ble_robot_controller.py --gui
+python serial_bluetooth_bridge.py --gui
 ```
 
 Scan only:
 
 ```bash
-python ble_robot_controller.py --scan-only --scan-timeout 15
+python serial_bluetooth_bridge.py --scan-only --scan-timeout 15
 ```

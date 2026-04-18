@@ -6,8 +6,8 @@ from pathlib import Path
 import PyInstaller.__main__
 
 
-APP_NAME = "BLERobotController"
-SCRIPT = "ble_robot_controller_gui.pyw"
+APP_NAME = "SerialBluetoothBridge"
+SCRIPT = "serial_bluetooth_bridge.pyw"
 
 
 def main() -> int:

@@ -454,9 +454,21 @@ class GuiBleTerminal:
         self.ttk = ttk
         self.args = args
         self.root = tk.Tk()
-        self.root.title("BLE Robot Controller")
+        self.root.title("Serial Bluetooth Bridge")
         self.root.geometry("820x560")
         self.root.minsize(620, 420)
+        self.colors = {
+            "bg": "#000000",
+            "panel": "#050709",
+            "terminal": "#000000",
+            "blue": "#00c8ff",
+            "orange": "#ff8a00",
+            "green": "#39ff14",
+            "red": "#ff2d55",
+            "purple": "#c77dff",
+            "white": "#f4f7fb",
+            "black": "#000000",
+        }
 
         self.loop = asyncio.new_event_loop()
         self.loop_thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -481,43 +493,109 @@ class GuiBleTerminal:
     def _build_ui(self) -> None:
         tk = self.tk
         ttk = self.ttk
+        colors = self.colors
 
-        outer = ttk.Frame(self.root, padding=10)
+        self.root.configure(bg=colors["bg"])
+        style = ttk.Style(self.root)
+        with contextlib.suppress(Exception):
+            style.theme_use("clam")
+        style.configure("Bridge.TFrame", background=colors["bg"])
+        style.configure("BridgePanel.TFrame", background=colors["panel"])
+        style.configure(
+            "Bridge.TLabel",
+            background=colors["bg"],
+            foreground=colors["blue"],
+        )
+        style.configure(
+            "Bridge.TCheckbutton",
+            background=colors["bg"],
+            foreground=colors["green"],
+            focuscolor=colors["bg"],
+        )
+        style.map(
+            "Bridge.TCheckbutton",
+            background=[("active", colors["bg"])],
+            foreground=[("active", colors["blue"])],
+        )
+        style.configure(
+            "Bridge.TCombobox",
+            fieldbackground=colors["panel"],
+            background=colors["panel"],
+            foreground=colors["green"],
+            arrowcolor=colors["orange"],
+        )
+        style.configure(
+            "Bridge.Vertical.TScrollbar",
+            background=colors["blue"],
+            troughcolor=colors["bg"],
+            bordercolor=colors["bg"],
+            arrowcolor=colors["black"],
+        )
+
+        def make_button(parent: object, text: str, command: object) -> object:
+            return tk.Button(
+                parent,
+                text=text,
+                command=command,
+                bg=colors["orange"],
+                fg=colors["black"],
+                activebackground=colors["blue"],
+                activeforeground=colors["black"],
+                relief=tk.FLAT,
+                borderwidth=0,
+                padx=14,
+                pady=7,
+                font=("Segoe UI", 10, "bold"),
+            )
+
+        outer = ttk.Frame(self.root, padding=10, style="Bridge.TFrame")
         outer.pack(fill=tk.BOTH, expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(2, weight=1)
 
-        top = ttk.Frame(outer)
+        top = ttk.Frame(outer, style="Bridge.TFrame")
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(1, weight=1)
 
-        ttk.Button(top, text="Scan", command=self.scan).grid(row=0, column=0, padx=(0, 6))
-        self.device_combo = ttk.Combobox(top, textvariable=self.device_var, state="readonly")
+        make_button(top, "Scan", self.scan).grid(row=0, column=0, padx=(0, 6))
+        self.device_combo = ttk.Combobox(top, textvariable=self.device_var, state="readonly", style="Bridge.TCombobox")
         self.device_combo.grid(row=0, column=1, sticky="ew", padx=(0, 6))
-        ttk.Button(top, text="Connect", command=self.connect).grid(row=0, column=2, padx=(0, 6))
-        ttk.Button(top, text="Disconnect", command=self.disconnect).grid(row=0, column=3)
+        make_button(top, "Connect", self.connect).grid(row=0, column=2, padx=(0, 6))
+        make_button(top, "Disconnect", self.disconnect).grid(row=0, column=3)
 
-        target = ttk.Frame(outer)
+        target = ttk.Frame(outer, style="Bridge.TFrame")
         target.grid(row=1, column=0, sticky="ew", pady=(8, 8))
         target.columnconfigure(1, weight=1)
-        ttk.Label(target, text="Name/address").grid(row=0, column=0, padx=(0, 6))
-        ttk.Entry(target, textvariable=self.target_var).grid(row=0, column=1, sticky="ew", padx=(0, 10))
-        ttk.Label(target, text="Line ending").grid(row=0, column=2, padx=(0, 6))
+        ttk.Label(target, text="Name/address", style="Bridge.TLabel").grid(row=0, column=0, padx=(0, 6))
+        tk.Entry(
+            target,
+            textvariable=self.target_var,
+            bg=colors["panel"],
+            fg=colors["green"],
+            insertbackground=colors["blue"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=colors["blue"],
+            highlightcolor=colors["orange"],
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 10), ipady=5)
+        ttk.Label(target, text="Line ending", style="Bridge.TLabel").grid(row=0, column=2, padx=(0, 6))
         ttk.Combobox(
             target,
             textvariable=self.line_ending_var,
             values=("none", "lf", "cr", "crlf"),
             width=7,
             state="readonly",
-        ).grid(row=0, column=3, padx=(0, 10))
+            style="Bridge.TCombobox",
+        ).grid(row=0, column=3, padx=(0, 10), ipady=3)
         ttk.Checkbutton(
             target,
             text="Auto reconnect",
             variable=self.auto_reconnect_var,
             command=self._update_auto_reconnect,
+            style="Bridge.TCheckbutton",
         ).grid(row=0, column=4)
 
-        terminal_frame = ttk.Frame(outer)
+        terminal_frame = ttk.Frame(outer, style="BridgePanel.TFrame")
         terminal_frame.grid(row=2, column=0, sticky="nsew")
         terminal_frame.columnconfigure(0, weight=1)
         terminal_frame.rowconfigure(0, weight=1)
@@ -526,32 +604,61 @@ class GuiBleTerminal:
             terminal_frame,
             wrap=tk.WORD,
             state=tk.DISABLED,
-            bg="#101418",
-            fg="#e7edf3",
-            insertbackground="#e7edf3",
+            bg=colors["terminal"],
+            fg=colors["green"],
+            insertbackground=colors["blue"],
             font=("Consolas", 10),
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=10,
+            pady=10,
         )
+        self.output.tag_configure("rx", foreground=colors["green"])
+        self.output.tag_configure("sent", foreground=colors["purple"])
+        self.output.tag_configure("status", foreground=colors["blue"])
+        self.output.tag_configure("blue", foreground=colors["blue"])
+        self.output.tag_configure("error", foreground=colors["red"])
         self.output.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(terminal_frame, command=self.output.yview)
+        scroll = ttk.Scrollbar(terminal_frame, command=self.output.yview, style="Bridge.Vertical.TScrollbar")
         scroll.grid(row=0, column=1, sticky="ns")
         self.output.configure(yscrollcommand=scroll.set)
 
-        send = ttk.Frame(outer)
+        send = ttk.Frame(outer, style="Bridge.TFrame")
         send.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         send.columnconfigure(0, weight=1)
         self.input_var = tk.StringVar()
-        entry = ttk.Entry(send, textvariable=self.input_var)
-        entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        entry = tk.Entry(
+            send,
+            textvariable=self.input_var,
+            bg=colors["panel"],
+            fg=colors["purple"],
+            insertbackground=colors["blue"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=colors["blue"],
+            highlightcolor=colors["orange"],
+        )
+        entry.grid(row=0, column=0, sticky="ew", padx=(0, 6), ipady=7)
         entry.bind("<Return>", lambda _event: self.send_line())
-        ttk.Button(send, text="Send", command=self.send_line).grid(row=0, column=1, padx=(0, 6))
-        ttk.Button(send, text="Clear", command=self.clear_output).grid(row=0, column=2)
+        make_button(send, "Send", self.send_line).grid(row=0, column=1, padx=(0, 6))
+        make_button(send, "Clear", self.clear_output).grid(row=0, column=2)
 
-        status = ttk.Label(outer, textvariable=self.status_var, anchor="w")
+        status = tk.Label(
+            outer,
+            textvariable=self.status_var,
+            anchor="w",
+            bg=colors["blue"],
+            fg=colors["black"],
+            padx=10,
+            pady=7,
+            font=("Segoe UI", 10, "bold"),
+        )
         status.grid(row=4, column=0, sticky="ew", pady=(8, 0))
 
         self.append_output(
-            "Direct BLE control mode.\n"
-            "Scan, connect to the BLE module, then type robot commands here.\n\n"
+            "Serial Bluetooth bridge mode.\n"
+            "Scan, connect to the BLE module, then type serial data here.\n\n",
+            "status",
         )
 
     def _run_loop(self) -> None:
@@ -577,7 +684,7 @@ class GuiBleTerminal:
             try:
                 func(*args, **kwargs)
             except Exception as exc:
-                self.append_output(f"\n[GUI ERROR] {exc}\n")
+                self.append_output(f"\n[GUI ERROR] {exc}\n", "error")
         self.root.after(50, self._drain_ui_queue)
 
     def _update_auto_reconnect(self) -> None:
@@ -586,9 +693,9 @@ class GuiBleTerminal:
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
 
-    def append_output(self, text: str) -> None:
+    def append_output(self, text: str, tag: str = "rx") -> None:
         self.output.configure(state=self.tk.NORMAL)
-        self.output.insert(self.tk.END, text)
+        self.output.insert(self.tk.END, text, tag)
         self.output.see(self.tk.END)
         self.output.configure(state=self.tk.DISABLED)
 
@@ -602,7 +709,7 @@ class GuiBleTerminal:
 
     def scan(self) -> None:
         self.set_status(f"Scanning for {self.args.scan_timeout:.1f} seconds...")
-        self.append_output(f"Scanning for BLE devices for {self.args.scan_timeout:.1f} seconds...\n")
+        self.append_output(f"Scanning for BLE devices for {self.args.scan_timeout:.1f} seconds...\n", "status")
         self.run_coro(self._scan())
 
     async def _scan(self) -> None:
@@ -619,7 +726,7 @@ class GuiBleTerminal:
             self.post_ui(self._show_scan_results, devices)
         except Exception as exc:
             self.post_ui(self.set_status, "Scan failed")
-            self.post_ui(self.append_output, f"[SCAN ERROR] {exc}\n")
+            self.post_ui(self.append_output, f"[SCAN ERROR] {exc}\n", "error")
 
     def _show_scan_results(self, devices: list[tuple[BLEDevice, AdvertisementData]]) -> None:
         self.devices = devices
@@ -633,13 +740,13 @@ class GuiBleTerminal:
         if values:
             self.device_combo.current(0)
             self.set_status(f"Found {len(values)} BLE device(s)")
-            self.append_output("\nNearby BLE devices:\n")
+            self.append_output("\nNearby BLE devices:\n", "status")
             for value in values:
-                self.append_output(f"  {value}\n")
-            self.append_output("\n")
+                self.append_output(f"  {value}\n", "blue")
+            self.append_output("\n", "status")
         else:
             self.set_status("No BLE devices found")
-            self.append_output("No BLE devices found.\n\n")
+            self.append_output("No BLE devices found.\n\n", "error")
 
     def selected_device(self) -> BLEDevice | None:
         selection = self.device_combo.current()
@@ -649,13 +756,13 @@ class GuiBleTerminal:
 
     def connect(self) -> None:
         if self.connect_task and not self.connect_task.done():
-            self.append_output("A connection attempt is already running.\n")
+            self.append_output("A connection attempt is already running.\n", "status")
             return
 
         target_text = self.target_var.get().strip()
         device = self.selected_device()
         if not device and not target_text:
-            self.append_output("Scan and select a device, or type a name/address first.\n")
+            self.append_output("Scan and select a device, or type a name/address first.\n", "error")
             return
 
         self.manual_disconnect = False
@@ -678,7 +785,7 @@ class GuiBleTerminal:
                 await self._connected_session(selected)
             except Exception as exc:
                 self.post_ui(self.set_status, "Disconnected")
-                self.post_ui(self.append_output, f"\n[ERROR] {exc}\n")
+                self.post_ui(self.append_output, f"\n[ERROR] {exc}\n", "error")
 
             if self.manual_disconnect or not self.auto_reconnect:
                 break
@@ -717,6 +824,7 @@ class GuiBleTerminal:
         self.post_ui(
             self.append_output,
             f"Connecting to {device.name or '(unnamed)'} at {device.address}...\n",
+            "status",
         )
 
         client = BleakClient(
@@ -739,13 +847,13 @@ class GuiBleTerminal:
             self.uart = uart
 
             if self.args.list_services:
-                self.post_ui(self.append_output, format_services(client))
+                self.post_ui(self.append_output, format_services(client), "blue")
 
             mode = "write-with-response" if uart.write_with_response else "write-without-response"
 
             def handle_rx(_sender: BleakGATTCharacteristic, data: bytearray) -> None:
                 text = bytes(data).decode(self.args.encoding, errors="replace")
-                self.post_ui(self.append_output, text)
+                self.post_ui(self.append_output, text, "rx")
 
             await client.start_notify(uart.rx, handle_rx)
             self.post_ui(self.set_status, f"Connected to {client.name} ({client.address})")
@@ -754,10 +862,11 @@ class GuiBleTerminal:
                 "Connected.\n"
                 f"TX characteristic: {uart.tx.uuid} [{mode}]\n"
                 f"RX characteristic: {uart.rx.uuid} [notify/indicate]\n\n",
+                "status",
             )
             await disconnected_event.wait()
             if not self.manual_disconnect:
-                self.post_ui(self.append_output, "\nDisconnected from BLE device.\n")
+                self.post_ui(self.append_output, "\nDisconnected from BLE device.\n", "error")
         finally:
             with contextlib.suppress(Exception):
                 if self.client and self.client.is_connected and self.uart:
@@ -773,11 +882,12 @@ class GuiBleTerminal:
         self.input_var.set("")
         payload = text.encode(self.args.encoding, errors="replace")
         payload += line_ending_bytes(self.line_ending_var.get())
+        self.append_output(f"> {text}\n", "sent")
         self.run_coro(self._send_payload(payload))
 
     async def _send_payload(self, payload: bytes) -> None:
         if not self.client or not self.client.is_connected or not self.uart:
-            self.post_ui(self.append_output, "[NOT CONNECTED] Cannot send yet.\n")
+            self.post_ui(self.append_output, "[NOT CONNECTED] Cannot send yet.\n", "error")
             return
         await write_ble_chunks(
             self.client,
@@ -811,7 +921,7 @@ def run_gui(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Bluetooth LE controller for Arduino robot serial modules."
+        description="Bluetooth LE serial bridge for UART-style Bluetooth modules."
     )
     parser.add_argument("--address", help="BLE device address/MAC as shown by the scan.")
     parser.add_argument("--name", help="Advertised BLE device name or name substring.")
