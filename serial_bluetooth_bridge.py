@@ -478,6 +478,8 @@ class GuiBleTerminal:
         self.client: BleakClient | None = None
         self.uart: UartCharacteristics | None = None
         self.connect_task: asyncio.Future[object] | None = None
+        self.tcp_server: asyncio.AbstractServer | None = None
+        self.tcp_clients: set[asyncio.StreamWriter] = set()
         self.manual_disconnect = False
         self.auto_reconnect = not args.no_reconnect
 
@@ -485,6 +487,9 @@ class GuiBleTerminal:
         self.target_var = tk.StringVar(value=args.name or args.address or "")
         self.line_ending_var = tk.StringVar(value=args.line_ending)
         self.status_var = tk.StringVar(value="Ready")
+        self.tcp_host_var = tk.StringVar(value=args.tcp_host)
+        self.tcp_port_var = tk.StringVar(value=str(args.tcp_port))
+        self.tcp_status_var = tk.StringVar(value="TCP stopped")
         self.auto_reconnect_var = tk.BooleanVar(value=self.auto_reconnect)
 
         self._build_ui()
@@ -551,7 +556,7 @@ class GuiBleTerminal:
         outer = ttk.Frame(self.root, padding=10, style="Bridge.TFrame")
         outer.pack(fill=tk.BOTH, expand=True)
         outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(2, weight=1)
+        outer.rowconfigure(3, weight=1)
 
         top = ttk.Frame(outer, style="Bridge.TFrame")
         top.grid(row=0, column=0, sticky="ew")
@@ -595,8 +600,40 @@ class GuiBleTerminal:
             style="Bridge.TCheckbutton",
         ).grid(row=0, column=4)
 
+        tcp_row = ttk.Frame(outer, style="Bridge.TFrame")
+        tcp_row.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        tcp_row.columnconfigure(1, weight=1)
+        ttk.Label(tcp_row, text="TCP listen IP", style="Bridge.TLabel").grid(row=0, column=0, padx=(0, 6))
+        tk.Entry(
+            tcp_row,
+            textvariable=self.tcp_host_var,
+            bg=colors["panel"],
+            fg=colors["green"],
+            insertbackground=colors["blue"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=colors["blue"],
+            highlightcolor=colors["orange"],
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 10), ipady=5)
+        ttk.Label(tcp_row, text="Port", style="Bridge.TLabel").grid(row=0, column=2, padx=(0, 6))
+        tk.Entry(
+            tcp_row,
+            textvariable=self.tcp_port_var,
+            width=8,
+            bg=colors["panel"],
+            fg=colors["green"],
+            insertbackground=colors["blue"],
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=colors["blue"],
+            highlightcolor=colors["orange"],
+        ).grid(row=0, column=3, padx=(0, 10), ipady=5)
+        make_button(tcp_row, "Start TCP", self.start_tcp_server).grid(row=0, column=4, padx=(0, 6))
+        make_button(tcp_row, "Stop TCP", self.stop_tcp_server).grid(row=0, column=5, padx=(0, 10))
+        ttk.Label(tcp_row, textvariable=self.tcp_status_var, style="Bridge.TLabel").grid(row=0, column=6, sticky="e")
+
         terminal_frame = ttk.Frame(outer, style="BridgePanel.TFrame")
-        terminal_frame.grid(row=2, column=0, sticky="nsew")
+        terminal_frame.grid(row=3, column=0, sticky="nsew")
         terminal_frame.columnconfigure(0, weight=1)
         terminal_frame.rowconfigure(0, weight=1)
 
@@ -624,7 +661,7 @@ class GuiBleTerminal:
         self.output.configure(yscrollcommand=scroll.set)
 
         send = ttk.Frame(outer, style="Bridge.TFrame")
-        send.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        send.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         send.columnconfigure(0, weight=1)
         self.input_var = tk.StringVar()
         entry = tk.Entry(
@@ -653,11 +690,11 @@ class GuiBleTerminal:
             pady=7,
             font=("Segoe UI", 10, "bold"),
         )
-        status.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        status.grid(row=5, column=0, sticky="ew", pady=(8, 0))
 
         self.append_output(
             "Serial Bluetooth bridge mode.\n"
-            "Scan, connect to the BLE module, then type serial data here.\n\n",
+            "Scan, connect to the BLE module, then type serial data here or start the TCP listener.\n\n",
             "status",
         )
 
@@ -692,6 +729,12 @@ class GuiBleTerminal:
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
+
+    def set_tcp_status(self) -> None:
+        if self.tcp_server is None:
+            self.tcp_status_var.set("TCP stopped")
+        else:
+            self.tcp_status_var.set(f"TCP clients: {len(self.tcp_clients)}")
 
     def append_output(self, text: str, tag: str = "rx") -> None:
         self.output.configure(state=self.tk.NORMAL)
@@ -767,6 +810,106 @@ class GuiBleTerminal:
 
         self.manual_disconnect = False
         self.connect_task = self.run_coro(self._connect_loop(device, target_text))
+
+    def start_tcp_server(self) -> None:
+        self.run_coro(self._start_tcp_server())
+
+    def stop_tcp_server(self) -> None:
+        self.run_coro(self._stop_tcp_server())
+
+    async def _start_tcp_server(self) -> None:
+        if self.tcp_server is not None:
+            self.post_ui(self.append_output, "TCP listener is already running.\n", "status")
+            return
+
+        host = self.tcp_host_var.get().strip() or "127.0.0.1"
+        try:
+            port = int(self.tcp_port_var.get().strip())
+            if port < 1 or port > 65535:
+                raise ValueError
+        except ValueError:
+            self.post_ui(self.append_output, "TCP port must be 1-65535.\n", "error")
+            return
+
+        try:
+            self.tcp_server = await asyncio.start_server(self._handle_tcp_client, host, port)
+        except Exception as exc:
+            self.tcp_server = None
+            self.post_ui(self.append_output, f"[TCP ERROR] {exc}\n", "error")
+            self.post_ui(self.set_tcp_status)
+            return
+
+        self.post_ui(self.append_output, f"TCP listener started on {host}:{port}\n", "status")
+        self.post_ui(self.set_tcp_status)
+
+    async def _stop_tcp_server(self) -> None:
+        if self.tcp_server is not None:
+            self.tcp_server.close()
+            await self.tcp_server.wait_closed()
+            self.tcp_server = None
+
+        clients = list(self.tcp_clients)
+        self.tcp_clients.clear()
+        for writer in clients:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+        self.post_ui(self.append_output, "TCP listener stopped.\n", "status")
+        self.post_ui(self.set_tcp_status)
+
+    async def _handle_tcp_client(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        peer = writer.get_extra_info("peername")
+        self.tcp_clients.add(writer)
+        self.post_ui(self.append_output, f"TCP client connected: {peer}\n", "status")
+        self.post_ui(self.set_tcp_status)
+
+        try:
+            while True:
+                data = await reader.read(4096)
+                if not data:
+                    break
+
+                text = data.decode(self.args.encoding, errors="replace")
+                display_text = text if text.endswith(("\n", "\r")) else text + "\n"
+                self.post_ui(self.append_output, f"TCP> {display_text}", "sent")
+                ok = await self._send_payload(data, show_error=False)
+                if not ok:
+                    self.post_ui(self.append_output, "[TCP DROP] BLE module is not connected.\n", "error")
+        except Exception as exc:
+            self.post_ui(self.append_output, f"[TCP CLIENT ERROR] {exc}\n", "error")
+        finally:
+            self.tcp_clients.discard(writer)
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            self.post_ui(self.append_output, f"TCP client disconnected: {peer}\n", "status")
+            self.post_ui(self.set_tcp_status)
+
+    async def _broadcast_tcp(self, data: bytes) -> None:
+        if not self.tcp_clients:
+            return
+
+        disconnected: list[asyncio.StreamWriter] = []
+        for writer in list(self.tcp_clients):
+            try:
+                writer.write(data)
+                await writer.drain()
+            except Exception:
+                disconnected.append(writer)
+
+        for writer in disconnected:
+            self.tcp_clients.discard(writer)
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+        if disconnected:
+            self.post_ui(self.set_tcp_status)
 
     async def _connect_loop(
         self,
@@ -852,8 +995,12 @@ class GuiBleTerminal:
             mode = "write-with-response" if uart.write_with_response else "write-without-response"
 
             def handle_rx(_sender: BleakGATTCharacteristic, data: bytearray) -> None:
-                text = bytes(data).decode(self.args.encoding, errors="replace")
+                raw = bytes(data)
+                text = raw.decode(self.args.encoding, errors="replace")
                 self.post_ui(self.append_output, text, "rx")
+                self.loop.call_soon_threadsafe(
+                    lambda payload=raw: self.loop.create_task(self._broadcast_tcp(payload))
+                )
 
             await client.start_notify(uart.rx, handle_rx)
             self.post_ui(self.set_status, f"Connected to {client.name} ({client.address})")
@@ -885,18 +1032,25 @@ class GuiBleTerminal:
         self.append_output(f"> {text}\n", "sent")
         self.run_coro(self._send_payload(payload))
 
-    async def _send_payload(self, payload: bytes) -> None:
+    async def _send_payload(self, payload: bytes, show_error: bool = True) -> bool:
         if not self.client or not self.client.is_connected or not self.uart:
-            self.post_ui(self.append_output, "[NOT CONNECTED] Cannot send yet.\n", "error")
-            return
-        await write_ble_chunks(
-            self.client,
-            self.uart.tx,
-            payload,
-            self.uart.write_with_response,
-            self.args.chunk_size,
-            self.args.chunk_delay,
-        )
+            if show_error:
+                self.post_ui(self.append_output, "[NOT CONNECTED] Cannot send yet.\n", "error")
+            return False
+        try:
+            await write_ble_chunks(
+                self.client,
+                self.uart.tx,
+                payload,
+                self.uart.write_with_response,
+                self.args.chunk_size,
+                self.args.chunk_delay,
+            )
+        except Exception as exc:
+            if show_error:
+                self.post_ui(self.append_output, f"[BLE WRITE ERROR] {exc}\n", "error")
+            return False
+        return True
 
     def disconnect(self) -> None:
         self.manual_disconnect = True
@@ -908,11 +1062,15 @@ class GuiBleTerminal:
 
     def close(self) -> None:
         self.manual_disconnect = True
-        future = self.run_coro(self._disconnect())
+        future = self.run_coro(self._shutdown())
         with contextlib.suppress(Exception):
             future.result(timeout=2)
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.root.destroy()
+
+    async def _shutdown(self) -> None:
+        await self._stop_tcp_server()
+        await self._disconnect()
 
 
 def run_gui(args: argparse.Namespace) -> None:
@@ -950,6 +1108,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-services", action="store_true", help="Print GATT services after connecting.")
     parser.add_argument("--gui", action="store_true", help="Use a graphical BLE control terminal.")
     parser.add_argument("--scan-only", action="store_true", help="Scan for BLE devices and exit without connecting.")
+    parser.add_argument("--tcp-host", default="127.0.0.1", help="Default GUI TCP listener host.")
+    parser.add_argument("--tcp-port", type=int, default=65432, help="Default GUI TCP listener port.")
     return parser
 
 
